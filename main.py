@@ -1,7 +1,7 @@
 """Author: Rohman Sultan
-   Date:   03/20/2022
+   Date:   04/10/2022
    Course: CS 457
-   Programming Assignment: #2
+   Programming Assignment: #3
 """
 
 import sys
@@ -21,6 +21,8 @@ class SQLiter:
         A regular expression to match user query for dropping or creating a database.
     match_select_from : str
         A regular expression to match user query for querying table.
+    match_join : str
+        A regular expression to match join operations
     match_create_table : str
         A regular expression to match user query for creating a table.
     match_drop_table : str
@@ -60,6 +62,8 @@ class SQLiter:
         Runs the SQLiter editor
      match_query(query):
         Finds out what the user is requesting from the query.
+    query_join(names, where_statement, join_type, columns)
+        Perfroms join operations.
      does_file_exist(name):
         Checks if file (table) exists with the supplied name.
      does_directory_exist(name):
@@ -96,6 +100,7 @@ class SQLiter:
         self.selected_database = None
         self.match_drop_or_create_database = r'^\s*(drop|create)\s+database\s+(\w+);?'
         self.match_select_from = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+)\s+from\s+(\w+)\s*(.*);?'
+        self.match_join = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+)\s+from\s+(\w+)\s*(\w+)(\s+inner\s+join\s+|\s+left\s+outer\s+join\s+|\s*,)\s*(\w+)\s+(\w+)\s+((where|on)\s+(\w+\.\w+)\s*(!?=|>=?|<=?)\s*(\w+\.\w+))\s*;?'
         self.match_create_table = r'^\s*create\s+table\s+(\w+)\s*\((.+)\);?$'
         self.match_drop_table = r'^\s*drop\s+table\s+(\w+);?'
         # self.match_alter_table = r'^\s*alter\s+table\s+(\w+)\s+(\w+)\s+((\w+)\s+((?:int|float|(?:var)?char\(\d+\))))\s*;?$'
@@ -146,6 +151,31 @@ class SQLiter:
                 return
 
             self.create_table(name, params)  # create the table.
+            return
+
+        query10 = re.search(self.match_join, query, re.I)
+        if query10:  # Is user wanting to perform a join operation?
+            if not self.selected_database:  # Has the user selected a database?
+                print(f'No database has been selected.')  # Let the user know that no database has been selected.
+                return
+            t1 = query10.group(2).strip()  # Get the name of left table.
+            t1_alias = query10.group(3).strip()  # Get the alias of the left table name.
+            t2 = query10.group(5).strip()  # The the name of right table.
+            t2_alias = query10.group(6).strip()  # Get the alias of the right table name.
+            join_type = query10.group(4).strip()  # Get the type of join operation.
+            join_type = re.sub(r'\s+', ' ', join_type)  # Remove excess spaces.
+            names = [(t1, t1_alias), (t2, t2_alias)]  # Store each table with their aliases.
+            where_statement = query10.group(7).strip()  # Get the where clause.
+            columns = query10.group(1).strip()  # The the column names.
+            columns = columns.split(',')  # Get each token
+            columns = list(map(lambda x: x.strip(), columns))  # Remove trailing and leading spaces
+            for name in names:
+                if name[1]:
+                    where_statement = where_statement.replace(f'{name[1]}.',
+                                                              f'{name[0]}.')  # Replace alias with the actual table name if present.
+            where_statement = re.sub(r'\s+', ' ', where_statement).split(' ')  # Remove excess spaces.
+            where_statement.pop(0)  # Remove 'where' from list.
+            self.query_join(names, where_statement, join_type, columns)  # Perform the join operation.
             return
 
         query4 = re.search(self.match_select_from, query, re.I)
@@ -474,6 +504,46 @@ class SQLiter:
             record = self.selected_columns(new_rows, indices)
 
         return record
+
+    def query_join(self, names, where_statement, join_type, columns):
+        # Queries multiple tables for join operation.
+        indices = []
+        tables = {}
+        for name in names:  # Go through each table
+            table_path = f'{self.selected_database}/{name[0]}.csv'
+            table_exists = self.does_file_exist(table_path)
+            if not table_exists:
+                print(f'!Failed to query table {name[0]} because it does not exist.')
+                return
+
+            with open(table_path) as tb:
+                rows = tb.readlines()
+                headers = rows[0].split('|')
+                headers = [re.search(r'^(\w+)', col, re.I).group(1) for col in headers]
+                table = {key: [val.split('|')[i].strip() for j, val in enumerate(rows[1:])] for i, key in
+                         enumerate(headers)}
+                indices.append([i for i, v in enumerate(headers) if v in columns])
+                tables[name[0]] = table
+
+        t1 = where_statement[0].split('.')
+        t2 = where_statement[2].split('.')
+        operat = where_statement[1]
+        records = ''
+        s = set()
+        for i, n1 in enumerate(tables[t1[0]][t1[1]]):  # Traverse first table.
+            for j, n2 in enumerate(tables[t2[0]][t2[1]]):  # Traverse second table.
+                if self.op[operat](self.util_func(n1), self.util_func(n2)):
+                    row_n1 = [v[i] for k, v in tables[t1[0]].items()]
+                    row_n2 = [v[j] for k, v in tables[t2[0]].items()]
+                    records += '|'.join(row_n1) + '|' + '|'.join(row_n2) + '\n'
+                    s.add(n1)
+
+            if join_type == 'left outer join' and n1 not in s: # include left table record if performing left outer join operation.
+                row_n1 = [v[i] for k, v in tables[t1[0]].items()]
+
+                records += '|'.join(row_n1) + '\n'
+
+        print(records)
 
     def query_table(self, name, columns, where_statement):
         # Queries a table from the given name and conditions.

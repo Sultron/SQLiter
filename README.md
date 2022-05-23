@@ -4,6 +4,10 @@
 
 In this version SQliter can now store, delete, insert, and query tuples.
 
+
+### How SQLiter performs different joins.
+A double nested for loop is need for each of the join operation. For outer left join, an addtional operation is performed to include the rest of the unmatched left table records.
+
 ### How SQLiter organizes multiple databases?
 
 Each database has its own dedicated directory.
