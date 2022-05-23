@@ -104,7 +104,7 @@ class SQLiter:
         self.selected_database = None
         self.is_table_locked = ('', False)
         self.match_drop_or_create_database = r'^\s*(drop|create)\s+database\s+(\w+);?'
-        self.match_select_from = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+)\s+from\s+(\w+)\s*(.*);?'
+        self.match_select_from = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+|(count|avg|max)\((\*|\w+)\))\s+from\s+(\w+)\s*(.*);?'
         self.match_join = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+)\s+from\s+(\w+)\s*(\w+)(\s+inner\s+join\s+|\s+left\s+outer\s+join\s+|\s*,)\s*(\w+)\s+(\w+)\s+((where|on)\s+(\w+\.\w+)\s*(!?=|>=?|<=?)\s*(\w+\.\w+))\s*;?'
         self.match_create_table = r'^\s*create\s+table\s+(\w+)\s*\((.+)\);?$'
         self.match_drop_table = r'^\s*drop\s+table\s+(\w+);?'
@@ -190,11 +190,17 @@ class SQLiter:
                 print(f'No database has been selected.')  # Let the user know that no database has been selected.
                 return
             # print(query4.groups())
+
             columns = query4.group(1).strip()
+            agg = query4.group(2).strip()
+            if agg.lower() == 'max' or agg.lower() == 'avg' or agg.lower() == 'count':
+                self.compute_aggregation(agg, query4)
+                return
+
             columns = columns.split(',')
             columns = list(map(lambda x: x.strip(), columns))
-            name = query4.group(2).strip()  # Get the table name.
-            where_statement = re.search(self.match_where, query4.group(3).strip(), re.I)
+            name = query4.group(4).strip()  # Get the table name.
+            where_statement = re.search(self.match_where, query4.group(5).strip(), re.I)
             self.query_table(name, columns, where_statement)  # Query the table.
             return
 
@@ -317,6 +323,46 @@ class SQLiter:
                 return param.replace('\'', '').replace('"', '')
                 # return val.group(1) if val.group(1) else val.group(2)   # Get value except for quotes.
 
+    def compute_aggregation(self, func, table):
+        name = table.group(4).strip()  # aggreation type
+        table_path = f'{self.selected_database}/{name}.csv'
+        table_exists = self.does_file_exist(table_path)
+
+        if not table_exists:
+            print(f'!Failed to insert values into table because {name} table does not exist.')
+            return
+        if func.lower() == 'count':
+            num_lines = sum(1 for _ in open(table_path)) - 1  # print lines
+            print(num_lines)
+            return
+        if func.lower() == 'max':
+            column_name = table.group(3).strip()
+            headers = open(table_path).readline().rstrip().split('|')
+            column_curser = -1
+            for i, header in enumerate(headers):
+                if column_name.lower() == header.lower().split(' ')[0]:
+                    column_curser = i
+
+            max_value = max(int(x.split('|')[column_curser]) for x in open(table_path).readlines()[1:])
+            print(max_value)
+            return
+
+        if func.lower() == 'avg':
+            column_name = table.group(3).strip()
+            fp = open(table_path)
+            headers = fp.readline().rstrip().split('|')
+            column_curser = -1
+            for i, header in enumerate(headers):
+                if column_name.lower() == header.lower().split(' ')[0]:
+                    column_curser = i
+            fp.seek(0)
+            avg_value = sum(int(x.split('|')[column_curser]) for x in fp.readlines()[1:])/(sum(1 for _ in open(table_path)) - 1)
+            print(avg_value)
+            return
+
+
+
+
     def insert_record(self, name, values):
         # Inserts a record to a table
         table_path = f'{self.selected_database}/{name}.csv'
@@ -356,7 +402,6 @@ class SQLiter:
         where_identifier = where_statement.group(1)
         operator = where_statement.group(2)
         where_value = where_statement.group(3)
-        print(where_identifier, operator, where_value)
         with open(f'{self.selected_database}/{name}.csv', 'r+') as f:
             file_contents = f.read().rstrip().splitlines()
             header = file_contents[0].split('|')  # Split each item in the line to create the tuple.
@@ -602,7 +647,7 @@ class SQLiter:
 
     def begin_transaction(self):
         """Starts accepting transaction block."""
-        sys.stdin.flush() # Clear standard input
+        sys.stdin.flush()  # Clear standard input
         trans_query = []
         for line2 in sys.stdin:
             if bool(re.match(r'\s*commit\s*;?', line2)):
@@ -617,10 +662,8 @@ class SQLiter:
                 self.lockable_table(self.is_table_locked[0], 1)
                 print('Transaction committed.')
                 return
-            print(re.match(self.match_modification, line2))
             table = re.match(self.match_modification, line2)
             if bool(table):
-                print(table.groups())
                 table_name = ''.join(filter(lambda x: x is not None, table.groups()))
                 self.lockable_table(table_name, 0)
             trans_query.append(line2.rstrip())
