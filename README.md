@@ -2,7 +2,7 @@
 
 ## Lighter than SQLite!
 
-SQliter is currently in the beginning stages and can only be used for managing the metadata of relational data.
+In this version SQliter can now store, delete, insert, and query tuples.
 
 ### How SQLiter organizes multiple databases?
 
@@ -11,6 +11,27 @@ Each database has its own dedicated directory.
 ### How SQLiter manages multiple tables?
 
 Each table is stored in it's own dedicated file.
+
+### How SQLiter store tuples in the table?
+Each item in a tuple is sepreated by a '|' when stored to a table.
+
+### How SQLiter do tuple insertion?
+A tuple is appended at the end of the table for insertions. 
+
+### How SQLiter do tuple deletion?
+SQLiter reads the table into memory and if a condtion is met, removes that row from the table and overwrites the file.
+
+### How SQLiter do tuple modification?
+SQLiter reads the table into memory and if a condtion is met, modifies that column from the table to the new value and overwrites the file.
+
+### How SQLiter do tuple modification?
+SQLiter reads the table into memory and if a condtion is met, modifies that column from the table to the new value and overwrites the file.
+
+### How SQLiter do tuple query?
+SQLiter reads the table into memory and prints the selected columns if a condtion is met.
+
+
+
 
 ## Implementation
 
@@ -25,7 +46,7 @@ Python version >= 3.10
 Run SQLiter using standard input.
 
 ```sh
-python main.py < PA1_test.sql
+python main.py < PA2_test.sql
 ```
 
 Run SQLiter using editor.
