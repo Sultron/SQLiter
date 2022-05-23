@@ -1,7 +1,7 @@
 """Author: Rohman Sultan
-   Date:   04/10/2022
+   Date:   05/05/2022
    Course: CS 457
-   Programming Assignment: #3
+   Programming Assignment: #4
 """
 
 import sys
@@ -17,10 +17,14 @@ class SQLiter:
     ----------
     selected_database : str
         Current database in use.
+    is_table_locked : bool
+
     match_drop_or_create_database : str
         A regular expression to match user query for dropping or creating a database.
     match_select_from : str
         A regular expression to match user query for querying table.
+    match_modification : str
+        A regular expression to match write operation queries.
     match_join : str
         A regular expression to match join operations
     match_create_table : str
@@ -98,6 +102,7 @@ class SQLiter:
 
     def __init__(self):
         self.selected_database = None
+        self.is_table_locked = ('', False)
         self.match_drop_or_create_database = r'^\s*(drop|create)\s+database\s+(\w+);?'
         self.match_select_from = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+)\s+from\s+(\w+)\s*(.*);?'
         self.match_join = r'^\s*select\s+(\*|(?:\w+\s*,?\s*)+)\s+from\s+(\w+)\s*(\w+)(\s+inner\s+join\s+|\s+left\s+outer\s+join\s+|\s*,)\s*(\w+)\s+(\w+)\s+((where|on)\s+(\w+\.\w+)\s*(!?=|>=?|<=?)\s*(\w+\.\w+))\s*;?'
@@ -109,7 +114,8 @@ class SQLiter:
         self.match_parameters = r'(\w+)\s+((?:int|float|(?:var)?char\(\d+\)))'
         self.match_insert = r'^\s*insert\s+into\s+(\w+)\s+values\s*\((.+)\)\s*;?'
         self.match_parameter_values = r'\s*([^,]+)\s*'
-        self.match_update = r'^\s*update\s+(.+)\s+set\s+(\w+)\s+=\s+([^;][\w.-_\'"]+)\s*(.*);'
+        self.match_modification = r'update\s+(\w+)|delete\s+from\s+(\w+)|insert\s+into\s+(\w+)|alter\s+table\s+(\w+)|drop\s+table\s+(\w+)'
+        self.match_update = r'^\s*update\s+(.+)\s+set\s+(\w+)\s*=\s*([^;][\w.-_\'\"]+)\s*(.*)\s*(?:;)'
         self.match_delete = r'^\s*delete\s+from\s+(\w+)\s*(;|\s+where\s+(.*)\s*;)'
         self.match_where = r'^\s*where\s+(.+)\s+(!?=|>=?|<=?)\s+(.+)\s*;?'
         self.op = {  # where statement operators, maps a string operator to a function.
@@ -343,9 +349,14 @@ class SQLiter:
             print(f'!Failed to alter table because it does not exist.')
             return
 
+        # else:
+        # with open(f'{name}-locked.txt'):
+        # pass
+
         where_identifier = where_statement.group(1)
         operator = where_statement.group(2)
         where_value = where_statement.group(3)
+        print(where_identifier, operator, where_value)
         with open(f'{self.selected_database}/{name}.csv', 'r+') as f:
             file_contents = f.read().rstrip().splitlines()
             header = file_contents[0].split('|')  # Split each item in the line to create the tuple.
@@ -354,7 +365,7 @@ class SQLiter:
             modified_count = 0  # The number of modifications.
             for i, col in enumerate(header):
                 ident = re.search(r'^(\w+)', col, re.I)
-                if ident and ident.group(1) == where_identifier:  # Is this the column to be modified?
+                if ident and ident.group(1).strip() == where_identifier.strip():  # Is this the column to be modified?
                     column_where_curser = i  # Save the column index.
 
                 if ident and ident.group(1) == set_identifier:  # Is this the column to run the condition?
@@ -362,7 +373,8 @@ class SQLiter:
 
             for i, row in enumerate(file_contents):
                 columns = row.split('|')
-                if self.op[operator](columns[column_where_curser], where_value.replace('\'', '')):  # Run the condition.
+                if self.op[operator](self.util_func(columns[column_where_curser]),
+                                     self.util_func(where_value)):  # Run the condition.
                     columns[column_set_curser] = set_value  # Modify the field.
                     file_contents[i] = '|'.join(columns)
                     modified_count += 1
@@ -538,7 +550,7 @@ class SQLiter:
                     records += '|'.join(row_n1) + '|' + '|'.join(row_n2) + '\n'
                     s.add(n1)
 
-            if join_type == 'left outer join' and n1 not in s: # include left table record if performing left outer join operation.
+            if join_type == 'left outer join' and n1 not in s:  # include left table record if performing left outer join operation.
                 row_n1 = [v[i] for k, v in tables[t1[0]].items()]
 
                 records += '|'.join(row_n1) + '\n'
@@ -572,9 +584,46 @@ class SQLiter:
         self.selected_database = name
         print(f'Using database {name}.')
 
+    def lockable_table(self, table, opt):
+        # Locks or removes a lock if opt is 1
+        if opt == 1:
+            os.remove(f'{table}-locked.txt')
+            return
+        if self.does_file_exist(f'{table}-locked.txt'):
+            self.is_table_locked = (table, True)
+            return
+
+        with open(f'{table}-locked.txt', 'w') as fp:
+            self.is_table_locked = (table, False)
+
     def run_query(self, query):
         """Accepts SQL query """
         self.match_query(query)
+
+    def begin_transaction(self):
+        """Starts accepting transaction block."""
+        sys.stdin.flush() # Clear standard input
+        trans_query = []
+        for line2 in sys.stdin:
+            if bool(re.match(r'\s*commit\s*;?', line2)):
+                if self.is_table_locked[1]:
+                    print(f'Error: Table {self.is_table_locked[0]} is locked!')
+                    return
+                if self.selected_database is None:
+                    print(f'Error: No database has beenselected!')
+                    return
+
+                list(map(self.run_query, trans_query))
+                self.lockable_table(self.is_table_locked[0], 1)
+                print('Transaction committed.')
+                return
+            print(re.match(self.match_modification, line2))
+            table = re.match(self.match_modification, line2)
+            if bool(table):
+                print(table.groups())
+                table_name = ''.join(filter(lambda x: x is not None, table.groups()))
+                self.lockable_table(table_name, 0)
+            trans_query.append(line2.rstrip())
 
     def user_prompt(self):
         # Prompt shown for the user.
@@ -586,6 +635,10 @@ class SQLiter:
             if ".exit" == line.rstrip().lower():  # Exit program when user inputs ".exit".
                 print('All done')
                 break
+            if bool(re.match(r'\s*begin\s+transaction\s*;?', line)):
+                self.begin_transaction()
+                continue
+
             if line.count(";"):  # Does the line contain a semicolon for end of command?
                 query += line.rstrip()  # Concatenate to the rest of the command
                 self.run_query(query)  # Run the query
